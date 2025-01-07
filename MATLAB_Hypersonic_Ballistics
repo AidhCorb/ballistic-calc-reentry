@@ -1,0 +1,198 @@
+clear all; close all; clc;
+
+%INPUT PARAMETERS: All angles in degrees
+Rn = 24642e3; %radius of Neptune at 1 bar atm pressure [m]
+dt = [1:1800]; %time step values [s]
+dt_mag = (dt(end)-dt(1))/60; %magnitude of total maneuver time [min]
+dt_firsthalf = dt(1:(length(dt)/2)); %maneuver time split into two arrays...
+dt_secondhalf = dt((length(dt)/2)+1:length(dt));
+V = [[-0.0034.*((dt_firsthalf).^2)-1.9998.*(dt_firsthalf)+32.5e3],[0.0034.*((dt_firsthalf).^2)-7.7787.*(dt_firsthalf)+27946.18]]; %time history of velocity magnitude [m/s]
+h = 0.5560.*((dt).^2)-1000.8212.*(dt)+50000; %time history of altitude [m]
+r = Rn+h; %time history of radius from planet center [m]
+lambda = [0:-1/length(dt):-1+1/length(dt)]; %time history of latitude [deg]
+%lambda = zeros(1,length(dt))+10; %time history of latitude [deg]
+
+%CONSTANTS:
+omega = 0.061685; %rotation rate of planet [deg/s]-----------ADD WINDSPEED BASED ON LATITUDE?----------!!!
+H = 19.7e3; %planetary scale height [m]
+g0 = 11.27; %initial gravitational acceleration at 1 bar atm pressure [m/s^2]
+rho0 = 0.45; %initial density [kg/m^3] at 1 bar atm pressure
+g = g0.*(((Rn)./(h+Rn)).^2); %function describing atmospheric gravity gradient [m/s^2]
+rho = 2500.*sind((360/49722.9e3).*(r+(25000e3/2)))+2500; %function describing atmospheric density gradient---------------NASA Neptune GRAM------------------!!!
+
+%CALCULATED PARAMETERS:
+dhdV = cfindif(h,V); %finite difference derivative of altitude by velocity
+dlambdadV = cfindif(lambda,V); %finite difference derivative of latitude by velocity
+dlambdadt = cfindif(lambda,dt); %finite difference time derivative of latitude
+dVdt = cfindif(V,dt); %finite difference time derivative of velocity
+
+%EQUATIONS OF MOTION
+beta_rhs_fn = (V+(g.*dhdV)-((omega^2).*r.*cosd(lambda).*(dhdV.*cosd(lambda)-r.*dlambdadV.*sind(lambda)))).*(dVdt./(rho.*(V.^3)));
+beta = 1./(-2.*beta_rhs_fn);
+
+%{
+OBSOLETE CODE SEGMENT, FOR REFERENCE...
+
+beta_rhs = [];
+for counter1 = 1:(length(beta_rhs_fn)-1)
+
+    beta_rhs = [beta_rhs,-0.5.*((V(counter1)-V(counter1+1)).*(beta_rhs_fn(counter1)+beta_rhs_fn(counter1+1)))];
+
+end
+
+
+%Make all arrays same size
+dt = dt(1:length(dt)-1);
+dhdV = dhdV(1:length(dhdV)-1);
+dlambdadV = dlambdadV(1:length(dlambdadV)-1);
+g = g(1:length(g)-1);
+h = h(1:length(h)-1);
+lambda = lambda(1:length(lambda)-1);
+r = r(1:length(r)-1);
+rho = rho(1:length(rho)-1);
+V = V(1:length(V)-1);
+beta = dt./(2.*beta_rhs);
+%}
+
+fpagl_rhs_top = -rho.*dhdV.*((V.^2)./(2.*beta));
+fpagl_rhs_bottom = V+(g.*dhdV)-(r.*(omega^2).*cosd(lambda).*(dhdV.*cosd(lambda)-r.*dlambdadV.*sind(lambda)));
+fpagl = asind(fpagl_rhs_top./fpagl_rhs_bottom); %flight path angle
+
+%--------Plot Atmospheric Model Monitor Window----------
+figure(1)
+tiledlayout(2,3)
+nexttile
+plot(dt,V/1e3)
+title('Velocity')
+subtitle('Relative to Neptune Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('V [km/s]')
+
+nexttile
+plot(dt,r/1000)
+title('Distance from Planet Center')
+subtitle('Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('Distance [km]')
+
+nexttile
+plot(dt,g)
+title('Gravitational Acceleration')
+subtitle('Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('g [m/s^{2}]')
+
+nexttile
+plot(dt,rho)
+title('Atmospheric Density')
+subtitle('Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('\rho [kg/m^{3}]')
+
+nexttile
+plot([0:25000/length(rho):25000]*1e3,2500.*sind((360./(49722.9e3)).*([0:25000e3/length(rho):25000e3]+(25000e3/2)))+2500)
+title('Planetary Density Profile')
+xlabel('Distance from Center of Neptune [km]')
+ylabel('\rho [kg/m^{3}]')
+
+nexttile
+plot(dt,dVdt)
+set(gca,'YDir','reverse')
+title('Deceleration G-Force experienced')
+xlabel('Time [s]')
+ylabel('a [m/s^{2}]')
+
+%----------
+
+psi = asind((dlambdadt.*r)./(V.*cosd(fpagl))); %heading angle
+dpsidt = cfindif(psi,dt); %finite difference derivative of heading angle
+dgammadt = cfindif(fpagl,dt); % finite difference derivative of flight path angle
+
+LDvert = ((2.*beta)./(rho.*(V.^2))).*(V.*dgammadt-(((V.^2).*cosd(fpagl))./(r))+g.*cosd(fpagl)+r.*(omega.^2).*cosd(lambda).*(cosd(fpagl).*cosd(lambda)+sind(fpagl).*sind(psi).*sind(lambda)-2.*V.*omega.*cosd(lambda).*cosd(psi)));
+LDlat = ((2.*beta.*cosd(fpagl))./(rho.*(V.^2))).*(V.*dpsidt-(((V.^2).*cosd(psi).*cosd(fpagl).*tand(lambda))./(r))-(2.*V.*omega.*(sind(psi).*tand(fpagl).*cosd(lambda)+sind(lambda)))+(r.*(omega^2).*((sind(lambda).*cosd(lambda).*cosd(psi))./(cosd(fpagl)))));
+
+LD = sqrt((LDvert.^2)+(LDlat.^2)); %Lift/Drag ratio
+phi = atand(LDlat./LDvert); %bank angle [deg]
+
+
+%--------Plot Vehicle Parameters Monitor Window----------
+figure(2)
+tiledlayout(3,3)
+
+nexttile
+plot(dt,fpagl)
+title('Flight Path Angle')
+subtitle('Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('\gamma [deg.]')
+
+nexttile
+plot(dt,beta)
+title('Ballistic Coefficient')
+subtitle('Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('\beta [kg/m^{2}]')
+
+nexttile
+plot(dt,LD)
+title('Lift to Drag Ratio')
+subtitle('Over Duration of Aerobrake Maneuver')
+xlabel('Time [s]')
+ylabel('L/D')
+
+nexttile
+plot(dt,dhdV)
+title('\deltah/\deltaV')
+xlabel('Time [s]')
+ylabel('\deltah/\deltaV')
+
+nexttile
+plot(dt,lambda)
+title('\lambda/\deltat')
+xlabel('Time [s]')
+ylabel('\lambda')
+
+nexttile
+plot(dt,psi)
+title('\delta\psi/\deltat')
+
+%----------Calculate Capsule Geometry-----------
+%chosen design parameters:
+deltac = 45; %cone angle [deg.]----------------------------------BASED ON WHAT??
+kappa = 0.2; %ratio of nose cone radius to base radius-----------BASED ON WHAT??
+aoa = 0; %angle of attack [deg.]
+mass = 1000; %total craft mass upon arrival [kg]-----------------ITERATE!!!
+
+%constants:
+MWNep = 2.3; %molecular weight Neptune atmosphere [g/mol]
+RNep = 3.61491; %gas constant Neptune [J/g/K]
+gamma = 1.3846; %specific heat capacity of Neptune atmosphere 
+Minf_max = 26; %maximum experienced mach number------------------CALCULATE BASED ON VELOCITY PROFILE AND ATMOSPHERIC SPEED OF SOUND PROFILE!!!
+
+Po2_Pinf = (((((gamma+1)^2)*(Minf_max^2))/(4*gamma*(Minf_max^2)-2*(gamma-1)))^((gamma)/(gamma-1)))*((1-gamma+2*gamma*(Minf_max^2))/(gamma+1));
+Cpmax = (2/(gamma*(Minf_max^2)))*(Po2_Pinf-1); %maximum pressure coefficient
+
+CN = (Cpmax/2)*(((kappa^2)/2)*sind(2*aoa)*((cosd(deltac))^4)+(1-(kappa^2)*((cosd(deltac))^2))*(((cosd(deltac))^2)*sind(2*aoa)));
+CA = (Cpmax/2)*(((((kappa^2)/2)*((2*(cosd(deltac))^2)*(1-(sind(deltac))^4)))+(((sind(aoa))^2)*((cosd(deltac))^4)))+((1-(kappa^2)*((cosd(deltac))^2))*((2*((sind(deltac))^2)*((cosd(aoa))^2))+(((cosd(deltac))^2)*((sind(aoa))^2)))));
+
+CL = CN*cosd(aoa)-CA*sind(aoa); %coefficient of lift
+CD = CA*cosd(aoa)-CN*sind(aoa); %coefficient of drag
+
+%----------
+
+function fin_dif = cfindif(f,g)
+
+    forward_fin_dif = (f(2)-f(1))/(g(2)-g(1));
+    central_fin_dif = [];
+    for counter = 2:length(f)-1
+        fup = f(counter+1);
+        flo = f(counter-1);
+        gup = g(counter+1);
+        glo = g(counter-1);
+        central_fin_dif = [central_fin_dif,(fup-flo)/(gup-glo)];
+
+    end
+    backwards_fin_dif = (f(end)-f(end-1))/(g(end)-g(end-1));
+
+    fin_dif = [forward_fin_dif,central_fin_dif, backwards_fin_dif];
+end
